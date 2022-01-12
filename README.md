@@ -5,6 +5,7 @@ TODO:
 - Write docs for the code file
 - Fix known problems
 - Save a cache of flags each time program is started instead of fetching in real time to save time
+- Make drop down box typable (ez) and live search while typing (WTFF)
 - Turn .py into .exe
 
 Known problems:
