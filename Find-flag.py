@@ -1,5 +1,7 @@
 from tkinter import *
 from tkinter.ttk import Combobox
+
+import PIL
 from PIL import Image, ImageTk
 from io import BytesIO
 import requests
@@ -7,7 +9,7 @@ from bs4 import BeautifulSoup
 
 root = Tk()
 root.minsize(320, 21)
-root.title('Flags')
+root.title('Flag Finder')
 root.resizable(0, 0)
 
 window = Frame()
@@ -234,7 +236,7 @@ def fetch_flag(country):
     flag_file += '.svg'
 
     link_wiki = 'https://en.wikipedia.org/wiki/File:' + flag_file
-    re = requests.get(link_wiki)
+    re = requests.get(link_wiki, timeout= 1)
     if re.status_code != requests.codes.ok:
         raise re.raise_for_status()
 
@@ -244,7 +246,23 @@ def fetch_flag(country):
             link_image = meta.get('content')
             break
 
-    return Image.open(BytesIO(requests.get(link_image).content)), link_wiki
+    try:
+        img = Image.open(BytesIO(requests.get(link_image).content))
+        img = img.resize((img.width // 2, img.height // 2), Image.ANTIALIAS)
+        img = ImageTk.PhotoImage(img)
+        img_flag = Label(
+            master=window,
+            image=img
+        )
+        img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
+        return img_flag, link_wiki
+    except PIL.UnidentifiedImageError:
+        lbl_fetch_error = Label(
+            master=window,
+            text='Failed to fetch the flag for this country. For now restarting the program fixes the problem.\nCurrently looking for a solution.',
+            justify='center'
+        )
+        return lbl_fetch_error, link_wiki
 
 def show_flag(Event):
     try:
@@ -254,14 +272,8 @@ def show_flag(Event):
         except IndexError:
             pass
 
-        img, link_wiki = fetch_flag(mnu_countries.get())
-        img = ImageTk.PhotoImage(img)
-        img_flag = Label(
-            master=window,
-            image=img
-        )
-        img_flag.image = img    # what the fuck is this sorcery https://stackoverflow.com/a/34235165
-        img_flag.grid(row=1, columnspan=2, sticky='news')
+        lbl_display, link_wiki = fetch_flag(mnu_countries.get())
+        lbl_display.grid(row=1, columnspan=2, sticky='news')
 
         lbl_credit = Label(
             master=window,
