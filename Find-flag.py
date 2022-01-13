@@ -1,9 +1,8 @@
 from tkinter import *
 from tkinter.ttk import Combobox
-from PIL import Image, ImageTk, UnidentifiedImageError
+from PIL import Image, ImageTk
 from io import BytesIO
-import requests
-from bs4 import BeautifulSoup
+import requests, json
 
 root = Tk()
 root.minsize(320, 21)
@@ -22,8 +21,6 @@ body = Frame(
     master=root,
     bg='light gray'
 )
-body.rowconfigure((0, 2), weight=1)
-body.columnconfigure(0, weight=1)
 body.pack(fill='x', side='top')
 
 footer = Frame(
@@ -250,30 +247,25 @@ def show_flag(Event):
     try:
         footer.grid_slaves(column=0)[0].grid_forget()
         footer.grid_slaves(column=1)[0].grid_forget()
-        body.grid_slaves(row=0)[0].grid_forget()
-        body.grid_slaves(row=1)[0].grid_forget()
-        body.grid_slaves(row=2)[0].grid_forget()
+        body.pack_slaves()[0].pack_forget()
     except IndexError:
         pass
 
-    country = mnu_countries.get().split(' ')
-    flag_file = 'Flag_of'
-    for name in country:
-        flag_file += '_' + name
-    flag_file += '.svg'
-
-    link_wiki = 'https://en.wikipedia.org/wiki/File:' + flag_file
-    re = requests.get(link_wiki, timeout=1, headers={'User-Agent' : 'Mozilla/5.0 (nguyen6626nam@gmail.com) (Windows NT 10.0; Win64; x64; rv:10.0) Gecko/20100101 Firefox/10.0'})
-    re.raise_for_status()
-
-    page = BeautifulSoup(re.content, 'lxml')
-    for meta in page('meta'):
-        if meta.get('property') == 'og:image':
-            link_image = meta.get('content')
-            break
-
     try:
-        re = requests.get(link_image, timeout=1, headers={'User-Agent' : 'Mozilla/5.0 (nguyen6626nam@gmail.com) (Windows NT 10.0; Win64; x64; rv:10.0) Gecko/20100101 Firefox/10.0'})
+        img_width = str(1000)   # set flag width here, aspect ratio preserved
+        link_json = 'https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=pageimages&list=&titles=File:Flag of ' \
+                    + mnu_countries.get() \
+                    + '.svg&pithumbsize=' + img_width
+        re = requests.get(link_json,
+                          timeout=1,
+                          headers={'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
+        re.raise_for_status()
+        json_raw = re.json()
+        json_id = json_raw['query']['pages']; json_id = json_id[tuple(json_id.keys())[0]]
+
+        re = requests.get(json_id['thumbnail']['source'],
+                          timeout=1,
+                          headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
         re.raise_for_status()
         img = Image.open(BytesIO(re.content))
         img = img.resize((img.width * 8 // 10, img.height * 8 // 10), Image.ANTIALIAS)
@@ -284,36 +276,23 @@ def show_flag(Event):
             bg='light gray',
         )
         img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
-        img_flag.grid(rowspan=3, column=0, sticky='news')
+        img_flag.pack()
+    except requests.exceptions.Timeout:
+        lbl_error_msg = Label(
+            master=body,
+            bg='light gray',
+            text='Fetch request timed out. Please retry by reselecting the country.',
+            justify='center'
+        )
+        lbl_error_msg.pack()
     except requests.exceptions.HTTPError:
-        lbl_error_msg0 = Label(
+        lbl_error_msg = Label(
             master=body,
             bg='light gray',
-            text='Failed to fetch the flag for this country. For now going to the image\'s source:',
+            text='HTTP Error. Code: ' + str(re.status_code) + '.\nMessage: ' + re.reason,
             justify='center'
         )
-
-        lbl_error_link = Text(
-            master=body,
-            bg='light gray',
-            borderwidth=0,
-            height=1,
-            width=len(link_image),
-            font=('Segoe UI', 9)
-        )
-        lbl_error_link.tag_config('center', justify=CENTER)
-        lbl_error_link.insert(0.0, link_image, 'center')
-        lbl_error_link.configure(state='disabled')
-
-        lbl_error_msg1 = Label(
-            master=body,
-            bg='light gray',
-            text='on your browser then reselecting the country fixes the problem (in most cases). Currently looking for a solution.',
-            justify='center'
-        )
-        lbl_error_msg0.grid(row=0, column=0, sticky='n')
-        lbl_error_link.grid(row=1, column=0)
-        lbl_error_msg1.grid(row=2, column=0)
+        lbl_error_msg.pack()
 
 
     lbl_credit = Label(
@@ -326,15 +305,14 @@ def show_flag(Event):
         bg='light gray',
         borderwidth=0,
         height=1,
-        width=len(link_wiki),
+        width=len('https://commons.wikimedia.org/wiki/File:' + json_id['pageimage']),
         font=('Segoe UI', 9)
     )
-    lbl_credit_link.insert(0.0, link_wiki)
+    lbl_credit_link.insert(0.0, 'https://commons.wikimedia.org/wiki/File:' + json_id['pageimage'])
     lbl_credit_link.configure(state='disabled')
 
     lbl_credit.grid(row=0, column=0, sticky='ws')
     lbl_credit_link.grid(row=0, column=1, sticky='ews', pady=1.5)
-
 
 mnu_countries.bind('<<ComboboxSelected>>', show_flag)
 
