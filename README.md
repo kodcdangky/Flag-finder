@@ -3,7 +3,7 @@ A small program to fetch flags of all countries from Wikimedia Commons database 
 
 TODO:
 - Write docs for the code file
-- Fetch image from API or directly from the file to link
+- Fetch image from API or directly from the link to file
 - Save a cache of flags each time program is started instead of fetching in real time to save time
 - Make drop down box typable (ez) and live search while typing (WTFF)
 - Turn .py into .exe
