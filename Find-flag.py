@@ -1,17 +1,39 @@
+'''
+Flag-finder 1.0.1a
+A small program to fetch and display flag of selected country from Wikimedia's database
+---------------------------------------------------------------------------------------
+
+Uses:
+- tkinter for GUI elements
+- tkinter.ttk for Combobox (dropdown menu) GUI element which isn't available with base tkinter
+- Pillow (PIL fork) for ImageTk to read png image and pass to tkinter Label since tkinter doesn't support png
+- io for BytesIO to read image data
+- requests to talk to Wikimedia's API
+
+Design choice:
+- Small, minimalistic
+- Light gray background to help flags with color white at the border stands out
+'''
+
 from tkinter import *
 from tkinter.ttk import Combobox
-from PIL import Image, ImageTk
+from PIL import ImageTk
 from io import BytesIO
-import requests, json
+import requests
+
+'''
+Greeting window: a small, minimalistic window with a label 'Choose a country:' and a dropdown list of countries
+for user to choose from
+'''
 
 root = Tk()
-root.minsize(320, 21)
+root.minsize(330, 0)
 root.title('Flag Finder')
-root.resizable(0, 0)
+root.resizable(False, False)
 
 header = Frame(
     master=root,
-    bg='light gray'
+    background='light gray'
 )
 header.columnconfigure(0, weight=0)
 header.columnconfigure(1, weight=1)
@@ -19,13 +41,13 @@ header.pack(fill='x', side='top')
 
 body = Frame(
     master=root,
-    bg='light gray'
+    background='light gray'
 )
-body.pack(fill='x', side='top')
+body.pack(fill='both', side='top')
 
 footer = Frame(
     master=root,
-    bg='light gray'
+    background='light gray'
 )
 footer.columnconfigure(0, weight=0)
 footer.columnconfigure(1, weight=1)
@@ -34,7 +56,7 @@ footer.pack(fill='x', side='bottom')
 lbl_country = Label(
     master=header,
     text='Choose a country:',
-    bg='light gray'
+    background='light gray'
 )
 lbl_country.grid(row=0, column=0, sticky='nw', padx=5)
 
@@ -130,7 +152,6 @@ countries = ('Afghanistan',
              'Kiribati',
              'North Korea',
              'South Korea',
-             # 'Kosovo',
              'Kuwait',
              'Kyrgyzstan',
              'Laos',
@@ -185,12 +206,12 @@ countries = ('Afghanistan',
              'Romania',
              'Russia',
              'Rwanda',
-             'Saint Kitts & Nevis',
+             'Saint Kitts and Nevis',
              'Saint Lucia',
              'Saint Vincent and the Grenadines',
              'Samoa',
              'San Marino',
-             'Sao Tome & Principe',
+             'Sao Tome and Principe',
              'Saudi Arabia',
              'Senegal',
              'Serbia',
@@ -243,7 +264,131 @@ mnu_countries = Combobox(
 mnu_countries.grid(row=0, column=1, sticky='new', padx=5)
 
 
+def get_image(country):
+    '''
+    Attempts to fetch image of flag of selected country.
+    Returns image of flag, and name of .svg image file (to be used in credits) if successful,
+    or returns error message, and empty string as name of .svg file otherwise
+    '''
+    try:
+        img_width = str(700)   # set flag width here, aspect ratio preserved
+        link_json = 'https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=pageimages&titles=File:Flag of ' \
+                    + country \
+                    + '.svg&pithumbsize=' + img_width
+        re = requests.get(link_json,
+                          timeout=1,
+                          headers={'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
+        re.raise_for_status()
+
+    except requests.exceptions.Timeout:
+        lbl_error_msg = Label(
+            master=body,
+            background='light gray',
+            text='JSON fetch request timed out. Please retry by reselecting the country.',
+            justify='center'
+        )
+        return lbl_error_msg, ''
+
+    except requests.exceptions.HTTPError:
+        lbl_error_msg = Label(
+            master=body,
+            background='light gray',
+            text='HTTP Error while fetching JSON. Code: ' + str(re.status_code) + '.\nMessage: ' + re.reason,
+            justify='center'
+        )
+        return lbl_error_msg, ''
+
+
+    try:
+        '''
+        json dict navigating. Format:
+        {
+          "batchcomplete": "",
+          "query": {
+            "pages": {
+              str(pageid_number): {
+                "pageid": pageid_number,
+                "ns": 6,
+                "title": "File:Flag of <country>.svg",
+                "thumbnail": {
+                  "source": <image link>,
+                  "width": img_width,
+                  "height": <depends on flag aspect ratio and img_width>
+                },
+                "pageimage": <image file name on Wikimedia>
+              }
+            }
+          }
+        }
+        '''
+        json_raw = re.json()
+        json_id = json_raw['query']['pages'].popitem()[1]
+
+        re = requests.get(json_id['thumbnail']['source'],
+                          timeout=1,
+                          headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
+        re.raise_for_status()
+
+        img = ImageTk.PhotoImage(file=BytesIO(re.content))
+        img_flag = Label(
+            master=body,
+            image=img,
+            background='light gray',
+        )
+        img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
+        return img_flag, json_id['pageimage']
+
+    except requests.exceptions.Timeout:
+        lbl_error_msg = Label(
+            master=body,
+            background='light gray',
+            text='Image fetch request timed out. Please retry by reselecting the country.',
+            justify='center'
+        )
+        return lbl_error_msg, ''
+
+    except requests.exceptions.HTTPError:
+        lbl_error_msg = Label(
+            master=body,
+            background='light gray',
+            text='HTTP Error while fetching image. Code: ' + str(re.status_code) + '.\nMessage: ' + re.reason,
+            justify='center'
+        )
+        return lbl_error_msg, ''
+
+
+def get_credit(file_flag):
+    '''
+    Returns credit, and a selectable link to .svg flag image file on Wikimedia
+    if file_flag isn't empty (meaning get_image was successful),
+    or returns two empty labels otherwise
+    '''
+    if file_flag == '':
+        return Label(footer, background='light gray'), Label(footer, background='light gray')
+
+    lbl_credit = Label(
+        master=footer,
+        text='Photos fetched from the Wikimedia Commons in real time. Source: ',
+        background='light gray'
+    )
+    lbl_credit_link = Text(
+        master=footer,
+        background='light gray',
+        borderwidth=0,
+        height=1,
+        width=len('https://commons.wikimedia.org/wiki/File:' + file_flag),
+        font=('Segoe UI', 9)
+    )
+    lbl_credit_link.insert(0.0, 'https://commons.wikimedia.org/wiki/File:' + file_flag)
+    lbl_credit_link.configure(state='disabled')
+    return lbl_credit, lbl_credit_link
+
+
 def show_flag(Event):
+    '''
+    First deletes existing credit and image (or error message) if exists,
+    then insert new image (or error message) and new credits
+    '''
     try:
         footer.grid_slaves(column=0)[0].grid_forget()
         footer.grid_slaves(column=1)[0].grid_forget()
@@ -251,68 +396,13 @@ def show_flag(Event):
     except IndexError:
         pass
 
-    try:
-        img_width = str(1000)   # set flag width here, aspect ratio preserved
-        link_json = 'https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=pageimages&list=&titles=File:Flag of ' \
-                    + mnu_countries.get() \
-                    + '.svg&pithumbsize=' + img_width
-        re = requests.get(link_json,
-                          timeout=1,
-                          headers={'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
-        re.raise_for_status()
-        json_raw = re.json()
-        json_id = json_raw['query']['pages']; json_id = json_id[tuple(json_id.keys())[0]]
+    lbl_result, file_flag = get_image(mnu_countries.get())
+    lbl_result.pack(fill='both')
 
-        re = requests.get(json_id['thumbnail']['source'],
-                          timeout=1,
-                          headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
-        re.raise_for_status()
-        img = Image.open(BytesIO(re.content))
-        img = img.resize((img.width * 8 // 10, img.height * 8 // 10), Image.ANTIALIAS)
-        img = ImageTk.PhotoImage(img)
-        img_flag = Label(
-            master=body,
-            image=img,
-            bg='light gray',
-        )
-        img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
-        img_flag.pack()
-    except requests.exceptions.Timeout:
-        lbl_error_msg = Label(
-            master=body,
-            bg='light gray',
-            text='Fetch request timed out. Please retry by reselecting the country.',
-            justify='center'
-        )
-        lbl_error_msg.pack()
-    except requests.exceptions.HTTPError:
-        lbl_error_msg = Label(
-            master=body,
-            bg='light gray',
-            text='HTTP Error. Code: ' + str(re.status_code) + '.\nMessage: ' + re.reason,
-            justify='center'
-        )
-        lbl_error_msg.pack()
-
-
-    lbl_credit = Label(
-        master=footer,
-        text='Photos fetched from the Wikimedia Commons in real time. Source: ',
-        bg='light gray'
-    )
-    lbl_credit_link = Text(
-        master=footer,
-        bg='light gray',
-        borderwidth=0,
-        height=1,
-        width=len('https://commons.wikimedia.org/wiki/File:' + json_id['pageimage']),
-        font=('Segoe UI', 9)
-    )
-    lbl_credit_link.insert(0.0, 'https://commons.wikimedia.org/wiki/File:' + json_id['pageimage'])
-    lbl_credit_link.configure(state='disabled')
-
+    lbl_credit, lbl_credit_link = get_credit(file_flag)
     lbl_credit.grid(row=0, column=0, sticky='ws')
     lbl_credit_link.grid(row=0, column=1, sticky='ews', pady=1.5)
+
 
 mnu_countries.bind('<<ComboboxSelected>>', show_flag)
 
