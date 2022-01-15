@@ -1,4 +1,4 @@
-'''
+"""
 Flag-finder 1.0.1a
 A small program to fetch and display flag of selected country from Wikimedia's database
 ---------------------------------------------------------------------------------------
@@ -13,13 +13,13 @@ Uses:
 Design choice:
 - Small, minimalistic
 - Light gray background to help flags with color white at the border stands out
-'''
-
+"""
+import ast
 from tkinter import *
 from tkinter.ttk import Combobox
 from PIL import ImageTk
 from io import BytesIO
-import requests
+import requests, os, time
 
 '''
 Greeting window: a small, minimalistic window with a label 'Choose a country:' and a dropdown list of countries
@@ -264,106 +264,154 @@ mnu_countries = Combobox(
 mnu_countries.grid(row=0, column=1, sticky='new', padx=5)
 
 
+def cache_flag(country, img):
+    """
+    Store image of selected countries' flag in and when it was cached AppData\Roaming\Flags
+    """
+    path = f'{os.getenv("AppData")}\\Flags'
+    if not os.path.exists(path):
+        os.makedirs(path)
+        with open(f'{path}\\update.log', 'w') as update:
+            update.write('{}')
+    with open(f'{path}\\update.log') as update:
+        log = ast.literal_eval(update.read())
+    with open(f'{path}\\{country}.png', 'wb') as image:
+        image.write(img)
+    log[country] = int(time.time())
+    with open(f'{path}\\update.log', 'w') as update:
+        update.write(str(log))
+
+
+def get_cache(country):
+    """
+    Returns path to image in cache if available and image is less than 1 week old,
+    or returns False otherwise
+    """
+    path = f'{os.getenv("AppData")}\\Flags'
+    if not os.path.exists(f'{path}\\{country}.png'):
+        return False
+    elif os.path.exists(path):
+        with open(f'{path}\\update.log') as file:
+            log = ast.literal_eval(file.read())
+
+    fetched = log.get(country, False)
+    if not fetched or int(time.time()) - fetched > 604800:
+        return False
+
+    with open(f'{path}\\{country}.png', 'rb') as file:
+        return file.read()
+
+
 def get_image(country):
-    '''
-    Attempts to fetch image of flag of selected country.
+    """
+    Search for valid image of flag of selected country in cache,
+    if none found, fetch flag from Wikimedia and cache it.
     Returns image of flag, and name of .svg image file (to be used in credits) if successful,
     or returns error message, and empty string as name of .svg file otherwise
-    '''
-    try:
-        img_width = str(700)   # set flag width here, aspect ratio preserved
-        link_json = 'https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=pageimages&titles=File:Flag of ' \
-                    + country \
-                    + '.svg&pithumbsize=' + img_width
-        re = requests.get(link_json,
-                          timeout=1,
-                          headers={'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
-        re.raise_for_status()
-
-    except requests.exceptions.Timeout:
-        lbl_error_msg = Label(
-            master=body,
-            background='light gray',
-            text='JSON fetch request timed out. Please retry by reselecting the country.',
-            justify='center'
-        )
-        return lbl_error_msg, ''
-
-    except requests.exceptions.HTTPError:
-        lbl_error_msg = Label(
-            master=body,
-            background='light gray',
-            text='HTTP Error while fetching JSON. Code: ' + str(re.status_code) + '.\nMessage: ' + re.reason,
-            justify='center'
-        )
-        return lbl_error_msg, ''
-
-
-    try:
-        '''
-        json dict navigating. Format:
-        {
-          "batchcomplete": "",
-          "query": {
-            "pages": {
-              str(pageid_number): {
-                "pageid": pageid_number,
-                "ns": 6,
-                "title": "File:Flag of <country>.svg",
-                "thumbnail": {
-                  "source": <image link>,
-                  "width": img_width,
-                  "height": <depends on flag aspect ratio and img_width>
-                },
-                "pageimage": <image file name on Wikimedia>
+    """
+    img = get_cache(country)
+    if img:
+        wiki_file = 'Flag_of'
+        country_name = country.split(' ')
+        for name in country_name:
+            wiki_file += f'_{name}'
+        wiki_file += '.svg'
+    else:
+        try:
+            img_width = str(700)   # set flag width here, aspect ratio preserved
+            link_json = f'https://commons.wikimedia.org/w/api.php?action=query&format=json&prop=pageimages&titles=File:Flag ' \
+                        f'of {country}.svg&pithumbsize={img_width}'
+            re = requests.get(link_json,
+                              timeout=1,
+                              headers={'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
+            re.raise_for_status()
+    
+        except requests.exceptions.Timeout:
+            lbl_error_msg = Label(
+                master=body,
+                background='light gray',
+                text='JSON fetch request timed out. Please retry by reselecting the country.',
+                justify='center'
+            )
+            return lbl_error_msg, ''
+    
+        except requests.exceptions.HTTPError:
+            lbl_error_msg = Label(
+                master=body,
+                background='light gray',
+                text=f'HTTP Error while fetching JSON. Code: {str(re.status_code)}.\nMessage: {re.reason}',
+                justify='center'
+            )
+            return lbl_error_msg, ''
+    
+        try:
+            '''
+            json dict navigating. Format:
+            {
+              "batchcomplete": "",
+              "query": {
+                "pages": {
+                  str(pageid_number): {
+                    "pageid": pageid_number,
+                    "ns": 6,
+                    "title": "File:Flag of <country>.svg",
+                    "thumbnail": {
+                      "source": <image link>,
+                      "width": img_width,
+                      "height": <depends on flag aspect ratio and img_width>
+                    },
+                    "pageimage": <image file name on Wikimedia>
+                  }
+                }
               }
             }
-          }
-        }
-        '''
-        json_raw = re.json()
-        json_id = json_raw['query']['pages'].popitem()[1]
+            '''
+            json_raw = re.json()
+            json_id = json_raw['query']['pages'].popitem()[1]
+    
+            re = requests.get(json_id['thumbnail']['source'],
+                              timeout=1,
+                              headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
+            re.raise_for_status()
+            img = re.content
+            cache_flag(country, img)
+            wiki_file = json_id['pageimage']
+    
+        except requests.exceptions.Timeout:
+            lbl_error_msg = Label(
+                master=body,
+                background='light gray',
+                text='Image fetch request timed out. Please retry by reselecting the country.',
+                justify='center'
+            )
+            return lbl_error_msg, ''
+    
+        except requests.exceptions.HTTPError:
+            lbl_error_msg = Label(
+                master=body,
+                background='light gray',
+                text=f'HTTP Error while fetching image. Code: {str(re.status_code)}.\nMessage: {re.reason}',
+                justify='center'
+            )
+            return lbl_error_msg, ''
 
-        re = requests.get(json_id['thumbnail']['source'],
-                          timeout=1,
-                          headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'})
-        re.raise_for_status()
-
-        img = ImageTk.PhotoImage(file=BytesIO(re.content))
-        img_flag = Label(
-            master=body,
-            image=img,
-            background='light gray',
+    img = ImageTk.PhotoImage(file=BytesIO(img))
+    img_flag = Label(
+        master=body,
+        image=img,
+        background='light gray',
         )
-        img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
-        return img_flag, json_id['pageimage']
-
-    except requests.exceptions.Timeout:
-        lbl_error_msg = Label(
-            master=body,
-            background='light gray',
-            text='Image fetch request timed out. Please retry by reselecting the country.',
-            justify='center'
-        )
-        return lbl_error_msg, ''
-
-    except requests.exceptions.HTTPError:
-        lbl_error_msg = Label(
-            master=body,
-            background='light gray',
-            text='HTTP Error while fetching image. Code: ' + str(re.status_code) + '.\nMessage: ' + re.reason,
-            justify='center'
-        )
-        return lbl_error_msg, ''
+    img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
+    return img_flag, wiki_file
 
 
-def get_credit(file_flag):
-    '''
+def get_credit(wiki_file):
+    """
     Returns credit, and a selectable link to .svg flag image file on Wikimedia
-    if file_flag isn't empty (meaning get_image was successful),
+    if wiki_file isn't empty (meaning get_image was successful),
     or returns two empty labels otherwise
-    '''
-    if file_flag == '':
+    """
+    if wiki_file == '':
         return Label(footer, background='light gray'), Label(footer, background='light gray')
 
     lbl_credit = Label(
@@ -376,19 +424,19 @@ def get_credit(file_flag):
         background='light gray',
         borderwidth=0,
         height=1,
-        width=len('https://commons.wikimedia.org/wiki/File:' + file_flag),
+        width=len(f'https://commons.wikimedia.org/wiki/File:{wiki_file}'),
         font=('Segoe UI', 9)
     )
-    lbl_credit_link.insert(0.0, 'https://commons.wikimedia.org/wiki/File:' + file_flag)
+    lbl_credit_link.insert(0.0, f'https://commons.wikimedia.org/wiki/File:{wiki_file}')
     lbl_credit_link.configure(state='disabled')
     return lbl_credit, lbl_credit_link
 
 
 def show_flag(Event):
-    '''
+    """
     First deletes existing credit and image (or error message) if exists,
     then insert new image (or error message) and new credits
-    '''
+    """
     try:
         footer.grid_slaves(column=0)[0].grid_forget()
         footer.grid_slaves(column=1)[0].grid_forget()
@@ -396,10 +444,10 @@ def show_flag(Event):
     except IndexError:
         pass
 
-    lbl_result, file_flag = get_image(mnu_countries.get())
+    lbl_result, wiki_file = get_image(mnu_countries.get())
     lbl_result.pack(fill='both')
 
-    lbl_credit, lbl_credit_link = get_credit(file_flag)
+    lbl_credit, lbl_credit_link = get_credit(wiki_file)
     lbl_credit.grid(row=0, column=0, sticky='ws')
     lbl_credit_link.grid(row=0, column=1, sticky='ews', pady=1.5)
 
