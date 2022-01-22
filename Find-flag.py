@@ -1,5 +1,5 @@
 """
-Flag-finder 1.3.0
+Flag-finder 1.2.0
 A small program to fetch and display flag of selected country from Wikimedia's database
 ---------------------------------------------------------------------------------------
 
