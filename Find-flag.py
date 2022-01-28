@@ -21,29 +21,35 @@ from fnmatch import fnmatch
 from string import ascii_lowercase
 import tkinter as tk
 import tkinter.ttk as ttk
-import requests, os
+import requests
+import os
 
 # Greeting window: a small window with a label and a dropdown list of countries for user to choose from
 
 class SearchableCombobox(ttk.Combobox):
     """
-    A ttk.Combobox whose entry field comes with autocompletion and can be used as a search bar
+    A ttk.Combobox whose entry field comes with autocompletion and can be used as a search bar (non-case sensitive)
+    Calls the assigned function when an element was typed correctly/selected
     """
-
-    def __init__(self, master=None, **kwargs):
+    def __init__(self,
+                 master=None,
+                 no_match_msg='<No match found, try a different pattern or select from the list below>',
+                 func=None,
+                 **kwargs):
         super().__init__(master, **kwargs)
         self.configure(state='normal')
-        self.focus_set()
-        self.bind('<KeyRelease>', self.autocomplete)
-        self.bind('<<ComboboxSelected>>', self.handle_cbox_selected)
-        self.bind('<Return>', self.handle_cbox_selected)
+        self.func = func
+        self.no_match_msg = no_match_msg if type(no_match_msg) is str else '<No match found, try a different pattern or select from the list below>'
+        self.bind('<KeyRelease>', self._autocomplete)
+        self.bind('<<ComboboxSelected>>', self._handle_cbox_selected)
+        self.bind('<Return>', self._handle_cbox_selected)
         self.bind('<FocusIn>', lambda _: self.selection_range(0, 'end'))
         
-    def handle_cbox_selected(self, _) -> None:
+    def _handle_cbox_selected(self, _) -> None:
         """
         Changes Combobox's dropdown depending on what is typed in by user.
         Shows the dropdown list with elements with the letters typed in, in the corresponding order,
-        or if an element was typed correctly/selected, show its result
+        or if an element was typed correctly/selected, call the assigned function
         """
 
         if not ''.join(self.get().split(' ')).isalpha():
@@ -51,11 +57,11 @@ class SearchableCombobox(ttk.Combobox):
 
         if self.get() not in self['values']:
             elem_list = tuple(self['values'])
-            self.configure(postcommand=lambda: None)
             matching_elem = []
 
             for elem in elem_list:
-                if len(self.get()) > len(elem): continue
+                if len(self.get()) > len(elem):
+                    continue
 
                 last_checked = -1
                 for typed_char in self.get().lower():
@@ -69,19 +75,19 @@ class SearchableCombobox(ttk.Combobox):
                     matching_elem.append(elem)
 
             if len(matching_elem) == 0:
-                matching_elem = list(elem_list)
-                matching_elem.insert(0, '--------------------')
-                matching_elem.insert(0, '<No match found, try a different pattern or select from the list below>')
-                self.configure(width=len('<No match found, try a different pattern or select from the list below>'))
+                matching_elem.append(self.no_match_msg)
+                matching_elem.append('--------------------')
+                matching_elem.extend(elem_list)
+                self.configure(width=len(self.no_match_msg))
 
             self.configure(values=matching_elem)
+            self.configure(postcommand=None)
             self.event_generate('<Down>')
-            self.configure(postcommand=lambda: self.configure(values=elem_list))
-
+            self.configure(postcommand=self.configure(values=elem_list))
         else:
-            show_flag()
+            self.func()
 
-    def autocomplete(self, event) -> None:
+    def _autocomplete(self, event) -> None:
         """
         Automatically completes the combobox entry field with the first element's name found that matches exactly with what
         has been typed in so far, continuously update the autocompletion as user continues typing
@@ -107,33 +113,56 @@ class SearchableCombobox(ttk.Combobox):
             if len(typed) > len(elem):
                 continue
 
-            if fnmatch(elem.lower(), f'{typed}*'):
+            if fnmatch(elem, f'{typed}*'):
                 self.set(elem)
                 self.selection_range(len(typed), 'end')
                 self.icursor('end')
                 break
 
 
-class ToolTip():
+class ToolTip:
     """
     An appear-on-hover-at-mouse-location tooltip. Works with a tkinter widget master
+    Credit: https://stackoverflow.com/questions/3221956/how-do-i-display-tooltips-in-tkinter/36221216#36221216
     """
-    def __init__(self, master=None, text=''):
+
+    def __init__(self, master=None, text: str = ''):
         self.master = master
         self.text = text
         self.tip_window = None
-        self.master.bind('<Enter>', self.showtip)
-        self.master.bind('<Leave>', self.hidetip)
+        self.id = None
+        self.x = self.y = 0
+        self.master.bind('<Enter>', self._enter)
+        self.master.bind('<Leave>', self._leave)
+        self.master.bind('<ButtonPress>', self._leave)
 
-    def showtip(self, _):
-        """Display text in tooltip window"""
+    def _enter(self, event=None):
+        self.x = event.x
+        self.y = event.y
+        self._schedule()
+
+    def _leave(self, _):
+        self._unschedule()
+        self._hidetip()
+
+    def _schedule(self):
+        self._unschedule()
+        self.id = self.master.after(500, self._showtip)
+
+    def _unschedule(self):
+        if self.id:
+            self.master.after_cancel(self.id)
+        self.id = None
+
+    def _showtip(self):
         if self.tip_window or not self.text:
             return
 
         self.tip_window = tk.Toplevel(self.master)
 
         self.tip_window.wm_overrideredirect(True)
-        self.tip_window.wm_geometry(f'+{self.master.winfo_pointerx()}+{self.master.winfo_pointery()}')
+        # self.tip_window.wm_geometry(f'+{self.master.winfo_pointerx()}+{self.master.winfo_pointery()}')
+        self.tip_window.wm_geometry(f'+{self.master.winfo_rootx() + self.x}+{self.master.winfo_rooty() + self.y}')
 
         label = tk.Label(master=self.tip_window,
                          text=self.text,
@@ -143,12 +172,13 @@ class ToolTip():
                          borderwidth=1,
                          font=('Segoe UI', '9'))
         label.pack(ipadx=2)
+        self.tip_window.bind('<Enter>', self._leave)
 
-    def hidetip(self, _):
-        tw = self.tip_window
+    def _hidetip(self):
+        if self.tip_window:
+            self.tip_window.unbind_all('<Enter>')
+            self.tip_window.destroy()
         self.tip_window = None
-        if tw:
-            tw.destroy()
 
 
 root = tk.Tk()
@@ -386,6 +416,7 @@ tips = ToolTip(master=mnu_countries,
                text='Type a country\'s name in, or type some letters and hit enter to show the countries with the typed letters in the corresponding order\n'
                     'E.g. "ez" will show Belize "B(e)li(z)e", New Zealand "N(e)w (Z)ealand", Venezuela "V(e)ne(z)uela",... (non-case sensitive)')
 
+
 dir_flags_log = f'{os.getenv("LocalAppData")}\\Flags'
 os.makedirs(dir_flags_log, exist_ok=True)
 dir_flags = f'{os.getenv("AppData")}\\Flags'
@@ -464,7 +495,7 @@ def get_image(country: str) -> (ttk.Label, str):
         wiki_file = f'Flag_of_{"_".join(country.split(" "))}.svg'
     else:
         try:
-            img_width = 700  # set display image of flag's width here, aspect ratio preserved
+            img_width = 700  # flag's width, aspect ratio preserved
             param_api = {'action': 'query', 'format': 'json', 'prop': 'pageimages', 'titles': f'File:Flag of {country}.svg', 'pithumbsize': img_width}
             re = requests.get("https://commons.wikimedia.org/w/api.php",
                               timeout=1,
@@ -592,5 +623,7 @@ def show_flag() -> None:
     lbl_credit.grid(row=0, column=0, sticky='ws', padx=(5, 0))
     lbl_credit_link.grid(row=0, column=1, sticky='ews', pady=1)
 
+mnu_countries.func = show_flag
+mnu_countries.focus_set()
 
 root.mainloop()
