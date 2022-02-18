@@ -21,7 +21,6 @@ from ast import literal_eval
 from fnmatch import fnmatch
 from string import ascii_lowercase
 from subprocess import run
-from collections.abc import Callable
 
 # External packages
 import requests
@@ -46,7 +45,7 @@ class SearchableCombobox(ttk.Combobox):
     """
     def __init__(self,
                  no_match_msg: str = '<No match found, try a different pattern or select from the list below>',
-                 function: Callable = None,
+                 function = None,
                  *func_args,
                  **kwargs):
         super().__init__(**kwargs)
