@@ -45,7 +45,7 @@ class SearchableCombobox(ttk.Combobox):
     """
     def __init__(self,
                  no_match_msg: str = '<No match found, try a different pattern or select from the list below>',
-                 function = None,
+                 function=None,
                  *func_args,
                  **kwargs):
         super().__init__(**kwargs)
