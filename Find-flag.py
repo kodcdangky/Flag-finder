@@ -3,63 +3,78 @@ Flag-finder 1.2.0
 A small program to fetch and display flag of selected country from Wikimedia's database
 ---------------------------------------------------------------------------------------
 
-Uses:
-- tkinter for GUI elements
-- tkinter.ttk for Combobox (dropdown menu) GUI element which isn't available with base tkinter
-
 Design choice:
 - Small, minimalistic
 - Light gray background to help flags with color white at the border stands out
-"""
 
-from PIL import ImageTk
+Dependencies:
+- requests v2.27.1
+- Pillow v9.0.0
+"""
+import os
+import tkinter as tk
+import tkinter.ttk as ttk
 from io import BytesIO
 from hashlib import sha3_256
 from time import time
 from ast import literal_eval
 from fnmatch import fnmatch
 from string import ascii_lowercase
-import tkinter as tk
-import tkinter.ttk as ttk
-import requests
-import os
+from subprocess import run
+from collections.abc import Callable
 
-# Greeting window: a small window with a label and a dropdown list of countries for user to choose from
+# External packages
+import requests
+from PIL import ImageTk
+
+
+FLAGS_LOG_DIR = os.path.join(os.getenv("LocalAppData"), "Flags")
+FLAGS_DIR = os.path.join(os.getenv("AppData"), "Flags")
+if os.name.startswith('nt'):
+    EXPLORER_PATH = os.path.join(os.getenv("WINDIR"), "explorer.exe")
+
 
 class SearchableCombobox(ttk.Combobox):
     """
     A ttk.Combobox whose entry field comes with autocompletion and can be used as a search bar (non-case sensitive)
     Calls the assigned function when an element was typed correctly/selected
+
+    :param no_match_msg: Message to show on top of menu when no matching elements are found
+    :param function: Callback function when an element is chosen
+    :param func_args: Arguments for callback function
+    :param kwargs: All keyword arguments accepted by ttk.Combobox.__init__()
     """
     def __init__(self,
-                 master=None,
-                 no_match_msg='<No match found, try a different pattern or select from the list below>',
-                 func=None,
+                 no_match_msg: str = '<No match found, try a different pattern or select from the list below>',
+                 function: Callable = None,
+                 *func_args,
                  **kwargs):
-        super().__init__(master, **kwargs)
-        self.configure(state='normal')
-        self.func = func
-        self.no_match_msg = no_match_msg if type(no_match_msg) is str else '<No match found, try a different pattern or select from the list below>'
-        self.bind('<KeyRelease>', self._autocomplete)
-        self.bind('<<ComboboxSelected>>', self._handle_cbox_selected)
-        self.bind('<Return>', self._handle_cbox_selected)
+        super().__init__(**kwargs)
+        self.__no_match_msg = str(no_match_msg)
+        self.__function = function if callable(function) and not isinstance(function, type) else None
+        self.__func_args = func_args
+        self.__values = self['values']  # The real value list of the CBox, while the seen list is dynamically changed depending on what's typed in
+        self.bind('<KeyRelease>', self.__autocomplete)
+        self.bind('<<ComboboxSelected>>', self.__selected)
+        self.bind('<Return>', self.__selected)
         self.bind('<FocusIn>', lambda _: self.selection_range(0, 'end'))
-        
-    def _handle_cbox_selected(self, _) -> None:
+
+    def __selected(self, _) -> None:
         """
+        Internally called only
+
         Changes Combobox's dropdown depending on what is typed in by user.
         Shows the dropdown list with elements with the letters typed in, in the corresponding order,
         or if an element was typed correctly/selected, call the assigned function
         """
-
+        # Only accepts letters and spaces
         if not ''.join(self.get().split(' ')).isalpha():
             return
 
-        if self.get() not in self['values']:
-            elem_list = tuple(self['values'])
+        if self.get() not in self.__values:
             matching_elem = []
 
-            for elem in elem_list:
+            for elem in self.__values:
                 if len(self.get()) > len(elem):
                     continue
 
@@ -75,26 +90,25 @@ class SearchableCombobox(ttk.Combobox):
                     matching_elem.append(elem)
 
             if len(matching_elem) == 0:
-                matching_elem.append(self.no_match_msg)
+                matching_elem.append(self.__no_match_msg)
                 matching_elem.append('--------------------')
-                matching_elem.extend(elem_list)
-                self.configure(width=len(self.no_match_msg))
+                matching_elem.extend(self.__values)
+                self.configure(width=len(self.__no_match_msg))
 
-            self.configure(values=matching_elem)
-            self.configure(postcommand=None)
+            self.configure(postcommand=super(SearchableCombobox, self).configure(values=matching_elem))
             self.event_generate('<Down>')
-            self.configure(postcommand=self.configure(values=elem_list))
-        else:
-            self.func()
+            self.configure(postcommand=super(SearchableCombobox, self).configure(values=self.__values))
+        elif self.__function:
+            self.__function(*self.__func_args)
 
-    def _autocomplete(self, event) -> None:
+    def __autocomplete(self, event) -> None:
         """
+        Internally called only
+
         Automatically completes the combobox entry field with the first element's name found that matches exactly with what
         has been typed in so far, continuously update the autocompletion as user continues typing
         """
-
         typed = self.get()
-        elem_list = tuple(self['values'])
         # <event.state> = 8 -> No modifiers (irrelevant)
         #               = 9 -> Shift (irrelevant)
         #               = 12 -> Ctrl
@@ -104,12 +118,12 @@ class SearchableCombobox(ttk.Combobox):
         #               = 131084 -> Ctrl+Alt
         #               = 131085 -> Ctrl+Alt+Shift
         #               = ... -> To be discovered
-        if not ''.join(typed.split(' ')).isalpha() or typed in elem_list \
+        if not ''.join(typed.split(' ')).isalpha() or typed in self.__values \
                 or event.state in (12, 13, 131080, 131081, 131084, 131085) \
                 or event.keysym.lower() not in tuple(ascii_lowercase):
             return
 
-        for elem in elem_list:
+        for elem in self.__values:
             if len(typed) > len(elem):
                 continue
 
@@ -119,26 +133,60 @@ class SearchableCombobox(ttk.Combobox):
                 self.icursor('end')
                 break
 
+    def configure(self, **kwargs) -> None:
+        """
+        Configure resources of this Combobox
+
+        :param kwargs: All keyword arguments accepted by ttk.Combobox.configure(), plus 'function', 'args', 'no_match_msg'
+        :key no_match_msg:  Message to show on top of menu when no matching elements are found
+        :key function: Callback function when an element is chosen
+        :key func_args: Arguments for callback function, passed in a tuple or list
+        """
+        if 'no_match_msg' in kwargs:
+            self.__no_match_msg = str(kwargs.pop('no_match_msg'))
+
+        if 'function' in kwargs:
+            if callable(kwargs['function']) and not isinstance(kwargs['function'], type):
+                self.__function = kwargs.pop('function')
+            else:
+                raise TypeError('Keyword "function" only accepts callable functions')
+
+        if 'func_args' in kwargs:
+            if isinstance(kwargs['func_args'], (list, tuple)):
+                self.__func_args = kwargs.pop('func_args')
+            else:
+                raise TypeError('Keyword "func_args" only accepts tuple or list')
+
+        if 'values' in kwargs:
+            if isinstance(kwargs['values'], (list[str], tuple[str, ...])):
+                self.__values = kwargs['values']
+        super().configure(**kwargs)
+    config = configure
+
 
 class ToolTip:
     """
     An appear-on-hover-at-mouse-location tooltip. Works with a tkinter widget master
     Credit: https://stackoverflow.com/questions/3221956/how-do-i-display-tooltips-in-tkinter/36221216#36221216
-    """
 
-    def __init__(self, master=None, text: str = ''):
+    :param master: tk/ttk widget that binds ToolTip (default: None)
+    :type master: tk.Widget | ttk.Widget
+    :param text: Message to show on tooltip (default: '')
+    :type text: str
+    :param delay: delay duration before showing the tooltip (in milliseconds) (default: 500)
+    :type delay: int
+    """
+    def __init__(self, master: tk.Widget | ttk.Widget = None, text: str = '', delay: int = 500):
         self.master = master
         self.text = text
-        self.tip_window = None
-        self.id = None
-        self.x = self.y = 0
+        self._tip_window = None
+        self._id = None
+        self.delay = delay
         self.master.bind('<Enter>', self._enter)
         self.master.bind('<Leave>', self._leave)
-        self.master.bind('<ButtonPress>', self._leave)
+        self.master.bind('<Button>', self._leave)
 
-    def _enter(self, event=None):
-        self.x = event.x
-        self.y = event.y
+    def _enter(self, _):
         self._schedule()
 
     def _leave(self, _):
@@ -147,40 +195,39 @@ class ToolTip:
 
     def _schedule(self):
         self._unschedule()
-        self.id = self.master.after(500, self._showtip)
+        self._id = self.master.after(self.delay, self._showtip)
 
     def _unschedule(self):
-        if self.id:
-            self.master.after_cancel(self.id)
-        self.id = None
+        if self._id:
+            self.master.after_cancel(self._id)
+        self._id = None
 
     def _showtip(self):
-        if self.tip_window or not self.text:
+        if self._tip_window or not self.text:
             return
 
-        self.tip_window = tk.Toplevel(self.master)
+        self._tip_window = tk.Toplevel(self.master)
 
-        self.tip_window.wm_overrideredirect(True)
-        # self.tip_window.wm_geometry(f'+{self.master.winfo_pointerx()}+{self.master.winfo_pointery()}')
-        self.tip_window.wm_geometry(f'+{self.master.winfo_rootx() + self.x}+{self.master.winfo_rooty() + self.y}')
+        self._tip_window.overrideredirect(True)
+        self._tip_window.geometry(f'+{self.master.winfo_pointerx() + 10}+{self.master.winfo_pointery() + 10}')
 
-        label = tk.Label(master=self.tip_window,
+        label = tk.Label(master=self._tip_window,
                          text=self.text,
                          justify='left',
                          background='#ffffe0',
                          relief='solid',
                          borderwidth=1,
                          font=('Segoe UI', '9'))
-        label.pack(ipadx=2)
-        self.tip_window.bind('<Enter>', self._leave)
+        label.pack()
+        self._tip_window.bind('<Enter>', self._leave)
 
     def _hidetip(self):
-        if self.tip_window:
-            self.tip_window.unbind_all('<Enter>')
-            self.tip_window.destroy()
-        self.tip_window = None
+        if self._tip_window:
+            self._tip_window.destroy()
+        self._tip_window = None
 
 
+# Greeting window: a small window with a label and a dropdown list of countries for user to choose from
 root = tk.Tk()
 root.minsize(400, 0)
 root.title('Flag Finder')
@@ -406,107 +453,114 @@ countries = ('Afghanistan',
              'Yemen',
              'Zambia',
              'Zimbabwe')
-mnu_countries = SearchableCombobox(
-    master=header,
-    values=countries,
-)
+mnu_countries = SearchableCombobox(master=header, values=countries)
 mnu_countries.grid(row=0, column=1, sticky='new', padx=5)
+ToolTip(master=mnu_countries,
+        text='Type a country\'s name in, or type some letters and press enter to show the countries with the typed letters in the corresponding order\n'
+             'E.g. "ez" will show Belize "B(e)li(z)e", New Zealand "N(e)w (Z)ealand", Venezuela "V(e)ne(z)uela",... (non-case sensitive)')
 
-tips = ToolTip(master=mnu_countries,
-               text='Type a country\'s name in, or type some letters and hit enter to show the countries with the typed letters in the corresponding order\n'
-                    'E.g. "ez" will show Belize "B(e)li(z)e", New Zealand "N(e)w (Z)ealand", Venezuela "V(e)ne(z)uela",... (non-case sensitive)')
+os.makedirs(FLAGS_LOG_DIR, exist_ok=True)
+os.makedirs(FLAGS_DIR, exist_ok=True)
 
 
-dir_flags_log = f'{os.getenv("LocalAppData")}\\Flags'
-os.makedirs(dir_flags_log, exist_ok=True)
-dir_flags = f'{os.getenv("AppData")}\\Flags'
-os.makedirs(dir_flags, exist_ok=True)
-def get_hash(file: str or bytes) -> str:
+def get_hash(file: str) -> str:
     """
-    Returns SHA3-256 hex of a file, using either the file's path (for log file) or binary data (for image files)
-    """
+    Returns SHA3-256 hex of a file, given its path
 
-    if type(file) is str:
-        with open(file, 'rb') as f:
-            return sha3_256(f.read()).hexdigest()
-    else:
-        return sha3_256(file).hexdigest()
+    :param file: to-be-hashed file's path
+    :return: hex hash of file
+    """
+    with open(file, 'rb') as f:
+        return sha3_256(f.read()).hexdigest()
 
 
 def cache_flag(country: str, img: bytes) -> None:
     """
-    Store image of selected countries' flags, when they were cached, and hash of stored images in %AppData%\Roaming\Flags
-    """
+    Store image of selected countries' flags, when they were cached, and hash of stored images in %AppData%\\Roaming\\Flags
 
+    :param country: name of country's flag to be cached
+    :param img: content of img file in bytes
+    """
     # if log file not exists | log_hash not exists | hash of log file is not equal to log_hash data: make new log file
-    if not os.path.exists(f'{dir_flags_log}\\log') or not os.path.exists(f'{dir_flags_log}\\log_hash') \
-            or get_hash(f'{dir_flags_log}\\log') != open(f'{dir_flags_log}\\log_hash').read():
-        with open(f'{dir_flags_log}\\log', 'w') as log:
+    if not (os.path.exists(os.path.join(FLAGS_LOG_DIR, 'log'))
+            and os.path.exists(os.path.join(FLAGS_LOG_DIR, 'log_hash'))
+            and get_hash(os.path.join(FLAGS_LOG_DIR, 'log')) == open(os.path.join(FLAGS_LOG_DIR, 'log_hash')).read()):
+        with open(os.path.join(FLAGS_LOG_DIR, 'log'), 'w') as log:
             log.write('{}')
 
-    with open(f'{dir_flags_log}\\log') as log:
+    with open(os.path.join(FLAGS_LOG_DIR, 'log')) as log:
         cache_log = literal_eval(log.read())
 
-    with open(f'{dir_flags}\\{country}.png', 'wb') as image:
+    with open(os.path.join(FLAGS_DIR, f'{country}.png'), 'wb') as image:
         image.write(img)
 
-    cache_log[country] = (int(time()), get_hash(img))
-    with open(f'{dir_flags_log}\\log', 'w') as log:
+    cache_log[country] = (int(time()), get_hash(os.path.join(FLAGS_DIR, f'{country}.png')))
+    with open(os.path.join(FLAGS_LOG_DIR, 'log'), 'w') as log:
         log.write(str(cache_log))
 
-    with open(f'{dir_flags_log}\\log_hash', 'w') as log_hash:
-        log_hash.write(get_hash(f'{dir_flags_log}\\log'))
+    with open(os.path.join(FLAGS_LOG_DIR, 'log_hash'), 'w') as log_hash:
+        log_hash.write(get_hash(os.path.join(FLAGS_LOG_DIR, 'log')))
 
 
-def get_cache(country: str) -> bool | bytes:
+def get_cache(country: str) -> str | None:
     """
     Returns path to image in cache if available and image is less than 1 week old,
-    or returns False otherwise
+    or returns None otherwise
+
+    :param country: name of country to return the cached flag of
+    :return: path to image in cache | None
     """
+    # if .png of flag not exists | log file not exists | log_hash not exists | hash of log file is equal to log_hash data: None
+    if not (os.path.exists(os.path.join(FLAGS_DIR, f'{country}.png'))
+            and os.path.exists(os.path.join(FLAGS_LOG_DIR, 'log'))
+            and os.path.exists(os.path.join(FLAGS_LOG_DIR, 'log_hash'))
+            and get_hash(os.path.join(FLAGS_LOG_DIR, 'log')) == open(os.path.join(FLAGS_LOG_DIR, 'log_hash')).read()):
+        return None
 
-    # if .png of flag not exists | log file not exists | log_hash not exists | hash of log file is equal to log_hash data: False
-    if not os.path.exists(f'{dir_flags}\\{country}.png') or not os.path.exists(f'{dir_flags_log}\\log') \
-            or not os.path.exists(f'{dir_flags_log}\\log_hash') \
-            or get_hash(f'{dir_flags_log}\\log') != open(f'{dir_flags_log}\\log_hash').read():
-        return False
-
-    with open(f'{dir_flags_log}\\log') as file:
+    with open(os.path.join(FLAGS_LOG_DIR, 'log')) as file:
         log = literal_eval(file.read())
 
-    # if country not in cache log | flag image older than 1 week | hash of image is not equal to recorded hash: False
-    cached = log.get(country, False)
-    if not cached or int(time()) - cached[0] > 604800 or get_hash(f'{dir_flags}\\{country}.png') != cached[1]:
-        return False
+    # if country not in cache log | flag image older than 1 week | hash of image is not equal to recorded hash: None
+    cached = log.get(country, None)
+    if not (cached
+            and int(time()) - cached[0] <= 604800
+            and get_hash(os.path.join(FLAGS_DIR, f'{country}.png')) == cached[1]):
+        return None
 
-    with open(f'{dir_flags}\\{country}.png', 'rb') as file:
-        return file.read()
+    return os.path.normpath(os.path.join(FLAGS_DIR, f'{country}.png'))
 
 
 def get_image(country: str) -> (ttk.Label, str):
     """
     Get image of flag of selected country from cache,
     if none found, fetch flag from Wikimedia and cache it.
-    Returns image of flag, and name of .svg image file (to be used in credits) if successful,
-    or returns error message, and empty string as name of .svg file otherwise
-    """
 
-    img = get_cache(country)
-    if img:
+    :param country: name of country to get flag of
+    :return: flag's image, and name of .svg file | error message, and empty string
+    """
+    img_path = get_cache(country)
+    if img_path:
         wiki_file = f'Flag_of_{"_".join(country.split(" "))}.svg'
+        with open(img_path, 'rb') as file:
+            img = file.read()
     else:
         try:
             img_width = 700  # flag's width, aspect ratio preserved
-            param_api = {'action': 'query', 'format': 'json', 'prop': 'pageimages', 'titles': f'File:Flag of {country}.svg', 'pithumbsize': img_width}
+            param_api = {'action': 'query',
+                         'format': 'json',
+                         'prop': 'pageimages',
+                         'titles': f'File:Flag of {country}.svg',
+                         'pithumbsize': img_width}
             re = requests.get("https://commons.wikimedia.org/w/api.php",
                               timeout=1,
-                              headers={'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'},
+                              headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:96.0) Gecko/20100101 Firefox/96.0'},
                               params=param_api)
             re.raise_for_status()
 
         except requests.exceptions.Timeout:
             lbl_error_msg = ttk.Label(
                 master=body,
-                text='JSON fetch request timed out. Please retry by reselecting the country.',
+                text='JSON fetch request timed out. Please retry by re-selecting the country.',
                 style='Error.TLabel'
             )
             return lbl_error_msg, ''
@@ -553,7 +607,7 @@ def get_image(country: str) -> (ttk.Label, str):
         except requests.exceptions.Timeout:
             lbl_error_msg = ttk.Label(
                 master=body,
-                text='Image fetch request timed out. Please retry by reselecting the country.',
+                text='Image fetch request timed out. Please retry by re-selecting the country.',
                 style='Error.TLabel'
             )
             return lbl_error_msg, ''
@@ -570,9 +624,17 @@ def get_image(country: str) -> (ttk.Label, str):
     img_flag = ttk.Label(
         master=body,
         image=img,
-        anchor='center'
+        anchor='center',
         )
     img_flag.image = img  # what the fuck is this sorcery https://stackoverflow.com/a/34235165
+    if os.name.startswith('nt'):
+        img_flag.configure(cursor='hand2')
+        img_flag.bind('<ButtonRelease-1>',
+                      lambda _: run([EXPLORER_PATH, '/select,', img_path if img_path else get_cache(country)]))
+        ToolTip(master=img_flag,
+                text='Click the flag to see all cached flags\n'
+                     'To cache a flag, select its country from the dropdown menu')
+
     return img_flag, wiki_file
 
 
@@ -581,8 +643,10 @@ def get_credit(wiki_file: str) -> (ttk.Label, ttk.Label | tk.Entry):
     Returns credit, and a selectable link to .svg flag image file on Wikimedia
     if wiki_file isn't empty (meaning get_image was successful),
     or returns two empty labels otherwise
-    """
 
+    :param wiki_file: name of .svg file
+    :return: credit and link | 2 empty ttk.Label
+    """
     if wiki_file == '':
         return ttk.Label(footer), ttk.Label(footer)
 
@@ -599,7 +663,7 @@ def get_credit(wiki_file: str) -> (ttk.Label, ttk.Label | tk.Entry):
     )
     lbl_credit_link.insert(0, f'https://commons.wikimedia.org/wiki/File:{wiki_file}')
     lbl_credit_link.configure(state='readonly')
-    lbl_credit_link.bind('<FocusIn>', lambda _:lbl_credit_link.selection_range(0, 'end'))
+    lbl_credit_link.bind('<FocusIn>', lambda _: lbl_credit_link.selection_range(0, 'end'))
     return lbl_credit, lbl_credit_link
 
 
@@ -608,7 +672,6 @@ def show_flag() -> None:
     First deletes existing credit and image (or error message) if exists,
     then insert new image (or error message) and new credits
     """
-
     try:
         footer.grid_slaves(column=0)[0].grid_forget()
         footer.grid_slaves(column=1)[0].grid_forget()
@@ -623,7 +686,8 @@ def show_flag() -> None:
     lbl_credit.grid(row=0, column=0, sticky='ws', padx=(5, 0))
     lbl_credit_link.grid(row=0, column=1, sticky='ews', pady=1)
 
-mnu_countries.func = show_flag
+
+mnu_countries.configure(function=show_flag)
 mnu_countries.focus_set()
 
 root.mainloop()
